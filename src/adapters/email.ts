@@ -1,27 +1,52 @@
-import "server-only";
+import nodemailer from "nodemailer";
+import { env } from "@/lib/env";
+import { logger } from "@/lib/logger";
 
-export type EmailMessage = { to: string; subject: string; text: string };
-export interface EmailAdapter { send(msg: EmailMessage): Promise<{ delivered: boolean; mode: string }> }
+export interface EmailMessage {
+  to: string;
+  subject: string;
+  html: string;
+  text?: string;
+  tenantId?: string;
+}
 
-/** Mode demo: hanya mencatat ke log server. Ganti dengan Resend/SMTP/Supabase Edge Function di produksi. */
-const demoAdapter: EmailAdapter = {
-  async send(msg) {
-    if (process.env.NODE_ENV !== "production") console.log(`[email:demo] -> ${msg.to}: ${msg.subject}`);
-    return { delivered: false, mode: "demo" };
-  },
-};
+export interface EmailResult { ok: boolean; provider: string; messageId: string | null; response: Record<string, unknown>; error?: string }
 
-/** Contoh integrasi Resend (aktif jika RESEND_API_KEY & EMAIL_FROM diisi). */
-const resendAdapter: EmailAdapter = {
-  async send(msg) {
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ from: process.env.EMAIL_FROM, to: msg.to, subject: msg.subject, text: msg.text }),
+export interface EmailAdapter { readonly name: string; send(message: EmailMessage): Promise<EmailResult> }
+
+class MockEmailAdapter implements EmailAdapter {
+  readonly name = "mock";
+  async send(message: EmailMessage): Promise<EmailResult> {
+    logger.info("[email mock] pesan tercatat", { to: message.to, subject: message.subject, tenantId: message.tenantId });
+    return { ok: true, provider: "mock", messageId: `mock-mail-${Date.now()}`, response: { simulated: true } };
+  }
+}
+
+class SmtpEmailAdapter implements EmailAdapter {
+  readonly name = "smtp";
+  async send(message: EmailMessage): Promise<EmailResult> {
+    const config = env();
+    const transport = nodemailer.createTransport({
+      host: config.SMTP_HOST,
+      port: config.SMTP_PORT,
+      secure: false,
+      ...(config.SMTP_USER ? { auth: { user: config.SMTP_USER, pass: config.SMTP_PASS } } : {}),
     });
-    return { delivered: res.ok, mode: "resend" };
-  },
-};
+    const info = await transport.sendMail({
+      from: config.EMAIL_FROM,
+      to: message.to,
+      subject: message.subject,
+      html: message.html,
+      text: message.text ?? message.html.replace(/<[^>]+>/g, ""),
+    });
+    transport.close();
+    return { ok: true, provider: "smtp", messageId: info.messageId, response: { accepted: info.accepted } };
+  }
+}
 
-export const getEmailAdapter = (): EmailAdapter => (process.env.RESEND_API_KEY && process.env.EMAIL_FROM ? resendAdapter : demoAdapter);
-export const sendEmail = (msg: EmailMessage) => getEmailAdapter().send(msg);
+let cached: EmailAdapter | null = null;
+export function emailAdapter(): EmailAdapter {
+  if (cached) return cached;
+  cached = env().EMAIL_ADAPTER === "smtp" ? new SmtpEmailAdapter() : new MockEmailAdapter();
+  return cached;
+}

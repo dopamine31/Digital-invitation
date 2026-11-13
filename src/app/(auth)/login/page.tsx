@@ -1,18 +1,18 @@
-import { redirect } from "next/navigation";
-import Link from "next/link";
-import { AuthForm } from "@/components/AuthForm";
-import { getSession } from "@/lib/auth";
+import { LoginForm, OtpForm, MagicLinkForm } from "@/components/auth/AuthForms";
 
 export const metadata = { title: "Masuk" };
 
-export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string }> }) {
-  const u = await getSession();
-  if (u) redirect(u.role === "customer" ? "/app" : "/admin");
-  const { next } = await searchParams;
+export default async function LoginPage({ searchParams }: { searchParams: Promise<{ mode?: string; error?: string }> }) {
+  const { mode, error } = await searchParams;
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center bg-[radial-gradient(ellipse_at_top,#f3ead9,#faf8f5_60%)] p-4">
-      <Link href="/" className="mb-6 font-display text-xl font-semibold">Digital Invitation Studio</Link>
-      <AuthForm mode="login" next={next} />
-    </main>
+    <div className="stack" style={{ gap: 22 }}>
+      <div>
+        <span className="badge badge-primary">Studio & Super Admin</span>
+        <h1 style={{ marginTop: 14 }}>Selamat datang kembali</h1>
+        <p className="muted" style={{ marginTop: 8 }}>Masuk untuk mengelola acara, tamu, dan RSVP.</p>
+      </div>
+      {error ? <div className="notice notice-error">Autentikasi gagal. Silakan coba lagi.</div> : null}
+      {mode === "otp" ? <OtpForm /> : mode === "magic" ? <MagicLinkForm /> : <LoginForm />}
+    </div>
   );
 }

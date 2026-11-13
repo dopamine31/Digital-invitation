@@ -1,82 +1,95 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Music, Pause, Volume2 } from "lucide-react";
-import type { Design, InvitationData, SectionItem, TemplateConfig } from "@/types";
-import { INV_CSS, fontsHref, mergeConfig, themeVars } from "./theme";
-import { Cover } from "./Cover";
-import { renderSection, type Ctx, type Wish } from "./Sections";
-import { isSafeUrl } from "@/lib/format";
 
-export type InvitationViewProps = {
-  invitationId: number; slug: string; title: string; data: InvitationData; baseConfig: TemplateConfig; design?: Design; sections: SectionItem[];
-  guest?: { name: string; code?: string }; wishes?: Wish[]; embedded?: boolean; baseUrl?: string;
-  removeBranding?: boolean; qr?: boolean; checkin?: boolean; music?: boolean; maxPhotos?: number; moderate?: boolean; rsvpEnabled?: boolean; brandName?: string;
-};
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Music2, VolumeX } from "lucide-react";
+import { getTheme, themeCssVariables } from "@/lib/themes";
+import { t } from "@/lib/i18n";
+import { sanitizeCss, sanitizeHeadMeta } from "@/lib/sanitize";
+import { Cover } from "@/components/invitation/Cover";
+import { InvitationSections } from "@/components/invitation/Sections";
+import { RsvpWizard } from "@/components/invitation/RsvpWizard";
+import type { InvitationViewData } from "@/lib/view";
+import type { Locale } from "@/lib/types";
 
-export function InvitationView(p: InvitationViewProps) {
-  const embedded = !!p.embedded;
-  const cfg = mergeConfig(p.baseConfig, p.design);
-  const [opened, setOpened] = useState(embedded);
+export function InvitationView({ data, preview = false }: { data: InvitationViewData; preview?: boolean }) {
+  const theme = getTheme(data.event.themeId);
+  const [open, setOpen] = useState(preview || !data.theme.animation.coverOpening);
+  const [locale, setLocale] = useState<Locale>(data.locale);
   const [playing, setPlaying] = useState(false);
-  const [vol, setVol] = useState(0.6);
-  const [showVol, setShowVol] = useState(false);
-  const audio = useRef<HTMLAudioElement>(null);
-  const root = useRef<HTMLDivElement>(null);
-  const hasMusic = !!(p.music && p.data.musicUrl && isSafeUrl(p.data.musicUrl));
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [scrollY, setScrollY] = useState(0);
+  const variables = useMemo(() => themeCssVariables(data.theme), [data.theme]);
+  const pattern = data.theme.background.type === "pattern" ? data.theme.background.value : undefined;
 
-  useEffect(() => { if (audio.current) audio.current.volume = vol; }, [vol]);
-  useEffect(() => { if (!embedded && !opened) document.documentElement.style.overflow = "hidden"; return () => { document.documentElement.style.overflow = ""; }; }, [embedded, opened]);
-  useEffect(() => { setOpened(embedded); }, [embedded]);
+  useEffect(() => {
+    if (!data.theme.animation.parallax || preview) return;
+    const onScroll = () => setScrollY(window.scrollY);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, [data.theme.animation.parallax, preview]);
 
-  const open = useCallback(() => {
-    setOpened(true);
-    if (!embedded) {
-      const key = `visit-${p.slug}-${p.guest?.code ?? ""}`;
-      if (!sessionStorage.getItem(key)) {
-        sessionStorage.setItem(key, "1");
-        fetch(`/api/public/${p.slug}/visit`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ g: p.guest?.code }) }).catch(() => undefined);
-      }
+  useEffect(() => {
+    if (!preview && data.theme.customHead) {
+      // Meta kustom sudah disanitasi; disuntik sebagai elemen inert, bukan script.
+      const container = document.createElement("div");
+      container.hidden = true;
+      container.setAttribute("data-head-meta", "sanitized");
+      container.innerHTML = sanitizeHeadMeta(data.theme.customHead);
+      document.head.appendChild(container);
+      return () => { container.remove(); };
     }
-    if (hasMusic && audio.current) audio.current.play().then(() => setPlaying(true)).catch(() => setPlaying(false)); // butuh interaksi pengguna: ini dipanggil dari klik tombol
-    setTimeout(() => (root.current?.querySelector("#intro, section:nth-of-type(2)") as HTMLElement | null)?.scrollIntoView({ behavior: "smooth" }), 80);
-  }, [embedded, hasMusic, p.guest?.code, p.slug]);
+    return undefined;
+  }, [preview, data.theme.customHead]);
 
-  const toggle = () => {
-    const a = audio.current; if (!a) return;
-    if (a.paused) a.play().then(() => setPlaying(true)).catch(() => undefined); else { a.pause(); setPlaying(false); }
+  const toggleMusic = async () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (playing) { audio.pause(); setPlaying(false); return; }
+    try {
+      audio.volume = data.theme.music.volume;
+      await audio.play();
+      setPlaying(true);
+    } catch {
+      setPlaying(false);
+    }
   };
 
-  const ctx: Ctx = {
-    invitationId: p.invitationId, slug: p.slug, title: p.title, data: p.data, cfg, guest: p.guest, embedded, baseUrl: p.baseUrl ?? "",
-    removeBranding: !!p.removeBranding, qr: !!p.qr, checkin: !!p.checkin, maxPhotos: p.maxPhotos ?? 60, wishes: p.wishes ?? [], moderate: !!p.moderate,
-    rsvpEnabled: p.rsvpEnabled !== false, brandName: p.brandName ?? "Digital Invitation Studio",
-  };
-  const items = p.sections.filter((s) => s.enabled);
-  const coverOn = items.some((s) => s.key === "cover");
-  const bgImage = p.design?.bgImage;
+  const rsvpNode = <RsvpWizard data={{ ...data, locale }} locale={locale} />;
+  const style = variables as React.CSSProperties;
 
   return (
-    <div ref={root} className="inv" data-anim={cfg.anim} data-btn={cfg.btn} style={{ ...themeVars(cfg, p.design?.fontScale ?? 1), ...(bgImage ? { backgroundImage: `linear-gradient(color-mix(in srgb,var(--bg) 88%,transparent),color-mix(in srgb,var(--bg) 88%,transparent)),url(${bgImage})`, backgroundSize: "cover", backgroundAttachment: embedded ? "scroll" : "fixed" } : {}) }}>
-      <link rel="stylesheet" href={fontsHref(cfg)} precedence="default" />
-      <style dangerouslySetInnerHTML={{ __html: INV_CSS }} />
-      {coverOn && <Cover data={p.data} cfg={cfg} guest={p.guest} embedded={embedded} opened={opened} onOpen={open} />}
-      {(opened || !coverOn) && items.filter((s) => s.key !== "cover").map((s) => renderSection(s, ctx))}
-      {hasMusic && (
+    <div className="inv-shell" data-pattern={pattern} data-theme={theme.dark ? "dark" : "light"} style={style}>
+      {data.theme.customCss ? <style dangerouslySetInnerHTML={{ __html: sanitizeCss(data.theme.customCss) }} /> : null}
+      {!open ? (
         <>
-          <audio ref={audio} src={p.data.musicUrl} loop preload="none" />
-          {opened && (
-            <div className="pointer-events-none sticky bottom-4 z-40 flex h-0 justify-end pr-4">
-              <div className="pointer-events-auto -translate-y-12 flex items-center gap-2">
-                {showVol && <input type="range" min={0} max={1} step={0.05} value={vol} onChange={(e) => setVol(Number(e.target.value))} aria-label="Volume musik" className="!w-24 !min-h-0 !border-0 !bg-transparent !p-0" />}
-                <button type="button" aria-label="Atur volume" onClick={() => setShowVol((v) => !v)} className="flex h-9 w-9 items-center justify-center rounded-full shadow-lg" style={{ background: "var(--surface)", color: "var(--accent)", border: "1px solid var(--accent)" }}><Volume2 size={16} /></button>
-                <button type="button" aria-label={playing ? "Jeda musik" : "Putar musik"} onClick={toggle} className="flex h-11 w-11 items-center justify-center rounded-full shadow-lg" style={{ background: "var(--accent)", color: "var(--on-accent)", animation: playing ? "i-float 2.4s ease-in-out infinite" : undefined }}>
-                  {playing ? <Pause size={18} /> : <Music size={18} />}
-                </button>
-              </div>
-            </div>
-          )}
+          <Cover data={{ ...data, locale }} locale={locale} onOpen={() => setOpen(true)} onLocaleChange={setLocale} />
+        </>
+      ) : (
+        <>
+          <section className="inv-cover" data-layout={theme.layout} style={{ minHeight: "62svh", transform: data.theme.animation.parallax && !preview ? `translateY(${Math.min(80, scrollY * .18)}px)` : undefined }}>
+            <Cover data={{ ...data, locale }} locale={locale} onOpen={() => undefined} onLocaleChange={setLocale} compact />
+          </section>
+          <InvitationSections data={{ ...data, locale }} locale={locale} onRsvp={() => {
+            const node = document.querySelector('[data-section-key="rsvp"]');
+            node?.scrollIntoView({ behavior: "smooth" });
+          }} rsvpNode={rsvpNode} />
         </>
       )}
+
+      {data.theme.music.enabled && data.theme.music.url ? (
+        <>
+          <audio ref={audioRef} src={data.theme.music.url} loop preload="none" onEnded={() => setPlaying(false)} data-trim-start={data.theme.music.trimStart} data-trim-end={data.theme.music.trimEnd} />
+          <button className="inv-music" onClick={toggleMusic} aria-label={playing ? t(locale, "cover.musicOff") : t(locale, "cover.musicOn")} title={playing ? t(locale, "cover.musicOff") : t(locale, "cover.musicOn")}>
+            {playing ? <Music2 size={19} /> : <VolumeX size={19} />}
+          </button>
+        </>
+      ) : null}
+
+      {!preview ? (
+        <div className="inv-lang" aria-label={t(locale, "common.language")}>
+          {(["id", "en"] as Locale[]).map((item) => <button key={item} data-active={locale === item} onClick={() => setLocale(item)}>{item.toUpperCase()}</button>)}
+        </div>
+      ) : null}
     </div>
   );
 }

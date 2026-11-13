@@ -1,88 +1,89 @@
-# Digital Invitation Studio
+# Rasa Undangan — Undangan Digital & RSVP Premium
 
-Platform bisnis undangan digital (Super Admin, Staff, Customer, Tamu) berbahasa Indonesia, mata uang IDR, zona waktu Asia/Jakarta.
-Mobile-first (Android/iPhone), dashboard dapat dipasang sebagai PWA.
+SaaS multi-tenant, multi-acara, 100% customizable untuk **Pengelola/Super Admin**, **Pemilik Acara/Tenant**, dan **Tamu**. Dibangun sebagai satu codebase produksi: Next.js 16 App Router, TypeScript strict, Prisma/PostgreSQL, Redis/BullMQ, MinIO, Vitest + Playwright, dan Docker Compose.
 
-> **Catatan jujur tentang teknologi.** Prompt awal meminta React + Vite. Lingkungan build proyek ini adalah **Next.js (App Router) + PostgreSQL (Drizzle ORM)**, sehingga aplikasi dibangun dengan stack itu. Keuntungannya: halaman undangan publik di-*render di server* sehingga **metadata Open Graph/WhatsApp benar-benar terbaca crawler**, dan hak akses (RBAC, entitlement paket) dipaksakan di server. Zustand/React Hook Form/Framer Motion tidak dipakai (editor memakai reducer + riwayat undo/redo sendiri, animasi memakai CSS ringan, validasi memakai Zod di server). Tidak ada mode "mock tanpa database": data demo disimpan di PostgreSQL asli dan di-*seed* otomatis saat pertama kali dijalankan.
+## Satu perintah (Ubuntu/Debian + bash)
+```bash
+./scripts/setup.sh
+# setara dengan:
+docker compose up -d --build
+curl -fsS http://localhost:3000/api/health
+```
+Aplikasi: `http://localhost:3000` · MinIO console `http://localhost:9001` · Mailhog `http://localhost:8025`.
 
-## Fitur
-- **Homepage** (hero, template unggulan, kategori, keunggulan, cara kerja, paket harga dari database, testimoni, FAQ, CTA, footer).
-- **30+ template** dengan kombinasi berbeda: 8 layout cover, 12 ornamen SVG, 6 gaya galeri, 6 animasi, 5 gaya tombol, 4 layout detail acara, 30+ font, palet unik (diuji otomatis: tidak ada dua template identik).
-- **Undangan publik** `/i/{slug}`: cover, intro, countdown, acara (4 layout), kalender (Google Calendar + .ics), cerita, galeri + lightbox/slideshow, video, peta, live streaming, RSVP, buku tamu (moderasi, anti-spam), hadiah digital + salin nomor, musik (tidak autoplay sebelum interaksi), penutup, footer + QR.
-- **Undangan personal** `?to=Nama&g=kode`: kelola tamu, impor/ekspor CSV, link WhatsApp, QR per tamu, status dibagikan/dibuka/hadir.
-- **Editor**: Simple & Advanced, live preview (mobile/desktop/layar penuh), autosave, undo/redo, drag-and-drop urutan section, hide/show, reset section, custom section, upload + crop + kompres foto, mode mobile berbasis tab & bottom bar.
-- **Customer**: dashboard, katalog (filter, pencarian debounce, favorit), checkout (paket, add-on, voucher), invoice cetak, upload bukti transfer, simulasi pembayaran demo, undangan (publish/unpublish/arsip/duplikasi/ganti template/hapus), RSVP & statistik, check-in QR, tiket bantuan, notifikasi, akun.
-- **Owner/Admin**: overview + grafik, pesanan (status, verifikasi pembayaran, diskon, catatan, instruksi, penugasan, riwayat, checklist kelengkapan), pembayaran + export CSV, customer (blokir/aktifkan), template (CRUD + konfigurasi desain), kategori, paket & add-on (entitlement dapat diedit), voucher, konten (hero/FAQ/testimoni/legal), staff & permission, audit log, pengaturan website & sistem (maintenance mode berfungsi).
-- **Staff**: dashboard berbeda (tugas, tiket), menu mengikuti permission yang diberikan Owner (dipaksakan di server).
-- **Entitlement paket**: batas tamu/foto, fitur personal/guestbook/hadiah/video/live/QR/check-in/export/password/jadwal/custom section dihitung dari paket + add-on **di server** (API, aksi, dan render publik).
-- **PWA**: manifest, service worker (cache aset aman, halaman privat & API tidak di-cache), fallback offline, notifikasi update, tombol pasang.
-- **Siap Supabase**: `supabase/migrations/0001_init.sql` (33 tabel + RLS), Edge Functions contoh, adapter pembayaran & email.
+Setup tanpa Docker (butuh PostgreSQL & Redis lokal):
+```bash
+cp .env.example .env
+npm ci
+npm run db:migrate
+npm run db:seed
+npm run dev
+```
 
 ## Akun demo
 | Peran | Email | Kata sandi |
 |---|---|---|
-| Owner | owner@demo.id | owner123 |
-| Staff (orders, support, customers) | staff@demo.id | staff123 |
-| Customer | customer@demo.id | customer123 |
+| Super Admin | `superadmin@rasa.id` | `SuperAdmin!234` |
+| Owner Acara / Tenant | `owner@harmoni.id` | `Owner!234` |
+| Panitia Check-in | `panitia@harmoni.id` | `Panitia!234` |
+| Owner tenant lain | `owner@anggrek.id`, `owner@nusantara.id` | `Owner!234` |
+| Editor / Co-Host | `editor@harmoni.id`, `cohost@harmoni.id` | `Owner!234` |
 
-Undangan demo publik: `/i/andi-dan-siti?to=Bapak%20Budi` (kode tamu demo: `demo0001`…`demo0012`). Voucher: `HEMAT10`, `WELCOME25K`, `EXCLUSIVE50`.
+Undangan demo: `http://localhost:3000/i/pernikahan-andi-siti`. Seed berisi 3 tenant, 5 acara, 200 tamu, RSVP/check-in/kunjungan/blast/wish/invoice/acara versi, dan 8 tema.
 
-## Menjalankan
-Persyaratan: Node.js 20+, PostgreSQL 14+.
+## Perintah harian
 ```bash
-cp .env.example .env            # isi DATABASE_URL & SESSION_SECRET
-npm install
-npx drizzle-kit push            # membuat tabel
-npm run dev                     # http://localhost:3000 (data demo di-seed otomatis)
-# produksi
-npm run build && npm start
-```
-Pengujian:
-```bash
-npx vitest run                              # unit + integrasi (17 tes)
-npx playwright install chromium
-BASE_URL=http://localhost:3000 npx playwright test   # E2E (server harus berjalan)
-npx tsc --noEmit
+npm run dev            # Next.js dev server (0.0.0.0:3000)
+npm run lint           # ESLint + aturan no-explicit-any
+npm run typecheck      # generate Prisma client + tsc --noEmit
+npm test               # unit & integration Vitest
+npm run test:e2e       # Playwright (butuh stack berjalan)
+npm run build          # produksi
+npm run db:migrate     # migrasi SQL versioned + checksum
+npm run db:seed        # seed idempoten (hanya saat DB kosong)
+npm run db:reset       # paksa reset + seed (FORCE_SEED=true)
+npm run worker         # BullMQ worker
+make up / make logs / make down
 ```
 
-## Struktur
-```
-src/app/            route Next.js: (public), (auth), app (customer), admin, i/[slug], preview, api
-src/components/     UI, editor, undangan (invitation/), katalog, form
-src/templates/      registry 30 template + data bawaan per kategori
-src/server/         core (settings, paket), invitations, orders, actions/ (server actions)
-src/adapters/       payment (demo/Midtrans/Xendit), email (demo/Resend)
-src/lib/            auth, entitlements, pricing, format, ratelimit, seed
-src/db/             skema Drizzle
-supabase/           migrasi SQL + RLS, Edge Functions, seed
-tests/              unit, integration, e2e
-docs/               dokumentasi teknis
-```
+## Fitur utama
+- **Super Admin**: KPI MRR/ARR/churn/funnel/error/storage, CRUD tenant & user, impersonate ber-audit + banner, suspend/ban, paket/limits/feature flags, kupon/reseller/payout, moderasi, marketplace template, pengumuman, pengaturan sistem, backup, audit log, GDPR/UU PDP export & delete.
+- **Owner**: onboarding wizard, editor visual drag/drop + undo/redo + autosave + versioning/rollback + duplikasi, live preview desktop/tablet/mobile, 8 tema berbeda, customizer warna/font/radius/latar/musik/animasi/CSS-HTML-head tersanitasi, PIC wajib di cover & wa.me, 20 section repeatable, RSVP builder conditional logic/kuota/sesi/menu/deadline/ID-EN, CSV/XLSX import + mapping + deduplikasi, link personal & QR, blast bertahap + template + reminder H-7/H-3/H-1, check-in QR/offline/walk-in/multi-loket/meja, analitik + ekspor CSV/XLSX/PDF, tim/komentar, billing/invoice/kupon/referral.
+- **Tamu**: sampul personal + nama & PIC, tap-to-open, scroll reveal/parallax, musik opsional, RSVP ≤3 langkah, e-ticket QR, Add to Calendar, share, edit/cancel via secure link, peta, ucapan, hadiah, buku tamu, tanpa login, ID/EN, “minta link saya” via WhatsApp ke PIC.
+- **Platform**: REST API per tenant (Bearer + HMAC + scope + rate limit), webhook HMAC 4 event, adapter mock WA/email/payment yang dapat diganti, PWA offline, CSP/HSTS, enkripsi & masking nomor, strict tenant isolation.
 
-## Kustomisasi cepat
-- **Logo / nama / warna brand / sosial / SEO**: Admin → Pengaturan (disimpan di tabel `settings`). Ikon PWA: ganti `public/icons/*.png`.
-- **Menambah template**: Admin → Template → *Tambah*, atau tambahkan entri di `src/templates/registry.ts` (lihat `docs/TEMPLATE_GUIDE.md`).
-- **Mengubah paket/harga/batas fitur**: Admin → Paket & Produk (JSON entitlements). Tidak ada harga yang di-hardcode di komponen.
-- **Payment gateway / email / Supabase / domain / deploy**: lihat `docs/DEPLOYMENT.md`, `docs/ENVIRONMENT.md`, `docs/DATABASE_SETUP.md`.
+## Dokumentasi
+`docs/ARCHITECTURE.md`, `docs/API.md`, `docs/DEPLOYMENT.md`, `docs/TESTING.md`, `docs/SECURITY.md`, `docs/ROADMAP.md`.
 
-## Demo vs butuh integrasi (transparan)
-| Fitur | Status |
-|---|---|
-| Pembayaran | **Demo**: transfer manual + verifikasi admin, dan "Simulasi pembayaran" (tanpa uang nyata). Midtrans/Xendit hanya kerangka adapter; belum aktif tanpa kunci server + webhook ber-signature. |
-| Email | Demo (log server). Aktif otomatis jika `RESEND_API_KEY` & `EMAIL_FROM` diisi. |
-| Push notification, live chat, custom domain otomatis, 2FA | Struktur/pengaturan tersedia; **belum** terintegrasi (butuh layanan eksternal / Supabase Auth). |
-| Penyimpanan media | Foto dikompres di browser dan disimpan sebagai data URL di PostgreSQL (cukup untuk demo). Produksi: pindahkan ke Supabase Storage / S3. |
-| Rate limiting | In-memory per instance. Produksi multi-instance: gunakan Redis/Upstash. |
-| Scan QR kamera | Memakai `BarcodeDetector` (Chrome/Android). iPhone/Safari: gunakan input kode manual. |
-| Custom CSS pelanggan | Sengaja **tidak** didukung demi keamanan (tersedia pengaturan warna/font/layout). |
-| Supabase | Migrasi & RLS disiapkan; aplikasi saat ini berjalan di atas PostgreSQL langsung via Drizzle. Migrasi penuh ke Supabase Auth/Storage = langkah lanjutan (lihat docs). |
+## Asumsi
+1. Acceptance dijalankan di Linux dengan Docker Compose; WhatsApp, email, dan pembayaran memakai adapter **mock** sehingga tidak ada layanan berbayar.
+2. `REDIS_URL` kosong → rate limit in-memory dan job diproses inline; saat Compose aktif, Redis/BullMQ dipakai penuh.
+3. `binaries.prisma.sh` tidak dapat diakses di sandbox build; `scripts/prisma-generate.sh` memakai placeholder engine untuk `prisma generate`, sementara runtime memakai WASM query compiler `@prisma/adapter-pg` tanpa binary native.
+4. Auth.js/Lucia tidak dipakai: sesi kustom dipilih agar impersonate, CSRF, OTP/magic link, dan Google OAuth exchange tetap terkontrol tanpa adapter tambahan.
+5. Seluruh kredensial berasal dari `.env`; `.env` lokal tidak di-commit. Nilai default `.env.example` hanya untuk development.
+6. `SEED_DEMO_DATA=true` mengisi data demo hanya saat database masih kosong, sehingga restart container tidak menghapus data produksi.
+7. Bahasa default `id`, mata uang `IDR`, timezone `Asia/Jakarta`; `en` siap dipakai lewat `?lang=en` atau pengaturan acara.
+8. Custom domain/white-label tersedia di model & flag paket, namun provisioning DNS/TLS otomatis masuk roadmap (lihat `docs/ROADMAP.md`).
+9. Lighthouse ≥90 perlu dijalankan pada lingkungan dengan PostgreSQL/Redis/MinIO aktif; angkanya tidak diklaim tanpa eksekusi. E2E sudah dijalankan lokal memakai PostgreSQL embedded dan Chromium dari paket npm karena CDN Playwright tidak dapat diakses di sandbox.
+10. `docker compose up` dan GitHub Actions belum dieksekusi di sandbox (Docker tidak tersedia); YAML, Dockerfile, entrypoint, dan workflow diperiksa statis.
 
-## Mengunggah ke GitHub (manual)
-```bash
-unzip digital-invitation-studio-complete.zip -d digital-invitation-studio && cd digital-invitation-studio
-git init && git add . && git commit -m "Initial commit: Digital Invitation Studio"
-git branch -M main
-git remote add origin https://github.com/USERNAME/NAMA-REPO.git
-git push -u origin main
-```
-Pastikan `.env` tidak ikut ter-commit (sudah ada di `.gitignore`).
+## Checklist penerimaan
+- [x] Register → tenant + trial + owner otomatis.
+- [x] Buat acara via wizard → editor/theme/section/form RSVP/versi awal.
+- [x] Ubah tema, warna, font, urutan section, show/hide, PIC nama+HP di cover & kontak + wa.me prefilled.
+- [x] Impor 100 tamu CSV/XLSX dengan mapping, preview, deteksi duplikat.
+- [x] Link personal + QR per tamu.
+- [x] WhatsApp mock blast tercatat di `Blast`/`BlastMessage`/`NotificationLog`.
+- [x] Tamu membuka link, RSVP dengan pertanyaan kustom & consent.
+- [x] Notifikasi RSVP ke owner & PIC (in-app + WA mock).
+- [x] Panitia check-in QR/manual tanpa duplikat + offline sync.
+- [x] Owner ekspor laporan CSV/XLSX/PDF.
+- [x] Super Admin KPI, ganti paket, impersonate ber-audit, suspend tenant.
+- [x] Lint, typecheck, 20 unit/integration test, production build, migrasi + seed idempoten, health/REST/OG/QR, dan 2 Playwright E2E lulus lokal.
+- [ ] `docker compose up` + GitHub Actions: belum dieksekusi di sandbox; konfigurasi sudah disiapkan dan divalidasi statis.
+
+## Status validasi
+Ringkasan perintah dan hasilnya ada di `docs/TESTING.md`. PR ini tidak mengklaim Docker/CI runtime pass karena binary Docker tidak tersedia di sandbox.
+
+## Roadmap singkat
+Provider nyata, custom domain otomatis, realtime collaboration, analytics warehouse, editor AI opsional, observability, dan partisi data skala besar — rincian di `docs/ROADMAP.md`.

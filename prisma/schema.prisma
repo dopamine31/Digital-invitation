@@ -1,0 +1,823 @@
+// Rasa Undangan — schema inti.
+// Semua tabel operasional memiliki tenantId. Isolasi dipaksakan dua kali:
+//   (1) FK + index di PostgreSQL, (2) tenantDb() extension di layer query.
+// Relasi antar tabel sengaja dinyatakan sebagai scalar id + join eksplisit:
+// menghindari nested writes yang bisa melewati policy tenant, dan membuat
+// setiap query dapat diaudit secara independen.
+
+generator client {
+  provider   = "prisma-client"
+  output     = "../src/generated/prisma"
+  runtime    = "nodejs"
+  engineType = "client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum PlatformRole {
+  SUPER_ADMIN
+  RESELLER
+  USER
+}
+
+enum UserStatus {
+  ACTIVE
+  INVITED
+  SUSPENDED
+}
+
+enum TenantStatus {
+  TRIAL
+  ACTIVE
+  PAST_DUE
+  GRACE
+  SUSPENDED
+  BANNED
+  EXPIRED
+}
+
+enum MemberRole {
+  TENANT_ADMIN
+  EVENT_OWNER
+  CO_HOST
+  EDITOR
+  CHECKIN_STAFF
+  VIEWER
+}
+
+enum EventStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum EventType {
+  WEDDING
+  KHITANAN
+  AQIQAH
+  BIRTHDAY
+  CORPORATE
+  SEMINAR
+  SYUKURAN
+  OTHER
+}
+
+enum RsvpStatus {
+  ATTENDING
+  DECLINED
+  MAYBE
+}
+
+enum BlastChannel {
+  WHATSAPP
+  EMAIL
+  SMS
+}
+
+enum BlastStatus {
+  DRAFT
+  SCHEDULED
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum MessageStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  READ
+  REPLIED
+  FAILED
+  OPTED_OUT
+}
+
+enum NotificationChannel {
+  WHATSAPP
+  EMAIL
+  IN_APP
+}
+
+enum WishStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+  EXPIRED
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  GRACE
+  EXPIRED
+  CANCELLED
+}
+
+enum TemplateStatus {
+  DRAFT
+  PUBLISHED
+  UNPUBLISHED
+}
+
+enum ReportStatus {
+  OPEN
+  RESOLVED
+  DISMISSED
+}
+
+model Tenant {
+  id               String       @id @default(cuid())
+  name             String
+  slug             String       @unique
+  customDomain     String?      @unique
+  subdomain        String?      @unique
+  status           TenantStatus @default(TRIAL)
+  planId           String
+  logoUrl          String?
+  faviconUrl       String?
+  branding         Json         @default("{}")
+  themeConfig      Json         @default("{}")
+  locale           String       @default("id")
+  currency         String       @default("IDR")
+  timezone         String       @default("Asia/Jakarta")
+  trialEndsAt      DateTime?
+  graceUntil       DateTime?
+  suspendedReason  String?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@index([status])
+  @@index([planId])
+}
+
+model User {
+  id              String       @id @default(cuid())
+  tenantId        String?
+  platformRole    PlatformRole @default(USER)
+  email           String       @unique
+  passwordHash    String?
+  name            String
+  phoneEncrypted  String?
+  phoneMasked     String?
+  phoneHash       String?      @unique
+  avatarUrl       String?
+  status          UserStatus   @default(ACTIVE)
+  emailVerifiedAt DateTime?
+  locale          String       @default("id")
+  lastLoginAt     DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([tenantId])
+  @@index([platformRole])
+}
+
+model Membership {
+  id        String     @id @default(cuid())
+  tenantId  String
+  userId    String
+  role      MemberRole
+  eventId   String?
+  invitedBy String?
+  createdAt DateTime   @default(now())
+
+  @@unique([tenantId, userId, role, eventId])
+  @@index([tenantId, userId])
+  @@index([tenantId, eventId])
+}
+
+model Session {
+  id             String    @id @default(cuid())
+  userId         String
+  tenantId       String?
+  tokenHash      String    @unique
+  csrfSecret     String
+  expiresAt      DateTime
+  revokedAt      DateTime?
+  impersonatorId String?
+  ipHash         String?
+  userAgentHash  String?
+  createdAt      DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model VerificationToken {
+  id         String    @id @default(cuid())
+  tenantId   String?
+  identifier String
+  channel    String
+  purpose    String
+  tokenHash  String    @unique
+  codeHash   String?
+  expiresAt  DateTime
+  attempts   Int       @default(0)
+  consumedAt DateTime?
+  meta       Json      @default("{}")
+  createdAt  DateTime  @default(now())
+
+  @@index([identifier, purpose])
+  @@index([expiresAt])
+}
+
+model Plan {
+  id           String   @id @default(cuid())
+  code         String   @unique
+  name         String
+  description  String   @default("")
+  monthlyPrice Int      @default(0)
+  yearlyPrice  Int      @default(0)
+  trialDays    Int      @default(14)
+  limits       Json     @default("{}")
+  features     Json     @default("{}")
+  isActive     Boolean  @default(true)
+  sortOrder    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model Subscription {
+  id               String             @id @default(cuid())
+  tenantId         String
+  planId           String
+  status           SubscriptionStatus @default(TRIALING)
+  billingCycle     String             @default("MONTHLY")
+  startedAt        DateTime           @default(now())
+  currentPeriodEnd DateTime
+  graceUntil       DateTime?
+  cancelledAt      DateTime?
+  autoRenew        Boolean            @default(true)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  @@index([tenantId, status])
+}
+
+model Invoice {
+  id           String        @id @default(cuid())
+  tenantId     String
+  number       String        @unique
+  subscriptionId String?
+  planId       String
+  amount       Int
+  discount     Int           @default(0)
+  tax          Int           @default(0)
+  total        Int
+  currency     String        @default("IDR")
+  status       InvoiceStatus @default(PENDING)
+  issuedAt     DateTime      @default(now())
+  dueAt        DateTime
+  paidAt       DateTime?
+  provider     String        @default("MOCK")
+  providerRef  String?
+  couponCode   String?
+  meta         Json          @default("{}")
+  createdAt    DateTime      @default(now())
+
+  @@index([tenantId, status])
+}
+
+model Transaction {
+  id          String   @id @default(cuid())
+  tenantId    String
+  invoiceId   String
+  amount      Int
+  provider    String
+  providerRef String?
+  status      String
+  rawPayload  Json     @default("{}")
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId, invoiceId])
+}
+
+model Coupon {
+  id               String    @id @default(cuid())
+  code             String    @unique
+  description      String    @default("")
+  type             String    @default("PERCENT")
+  value            Int
+  maxRedemptions   Int       @default(0)
+  redeemedCount    Int       @default(0)
+  validFrom        DateTime  @default(now())
+  validUntil       DateTime?
+  appliesToPlanIds Json      @default("[]")
+  active           Boolean   @default(true)
+  createdBy        String?
+  createdAt        DateTime  @default(now())
+}
+
+model CouponRedemption {
+  id              String   @id @default(cuid())
+  tenantId        String
+  couponId        String
+  invoiceId       String?
+  discountApplied Int
+  createdAt       DateTime @default(now())
+
+  @@index([tenantId, couponId])
+}
+
+model Referral {
+  id                String   @id @default(cuid())
+  tenantId          String
+  code              String   @unique
+  referredTenantId  String?
+  commissionPercent Int      @default(10)
+  totalEarned       Int      @default(0)
+  status            String   @default("ACTIVE")
+  createdAt         DateTime @default(now())
+}
+
+model Payout {
+  id         String    @id @default(cuid())
+  referralId String
+  amount     Int
+  status     String    @default("PENDING")
+  note       String?
+  paidAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([referralId])
+}
+
+model Event {
+  id            String      @id @default(cuid())
+  tenantId      String
+  slug          String      @unique
+  title         String
+  type          EventType   @default(WEDDING)
+  status        EventStatus @default(DRAFT)
+  startsAt      DateTime
+  endsAt        DateTime?
+  timezone      String      @default("Asia/Jakarta")
+  themeId       String      @default("elegant-ivory")
+  themeConfig   Json        @default("{}")
+  sections      Json        @default("[]")
+  settings      Json        @default("{}")
+  meta          Json        @default("{}")
+  coverImageUrl String?
+  publishedAt   DateTime?
+  indexable     Boolean     @default(false)
+  createdBy     String
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@index([tenantId, status])
+  @@index([tenantId, createdAt])
+}
+
+model EventVersion {
+  id        String   @id @default(cuid())
+  tenantId  String
+  eventId   String
+  version   Int
+  snapshot  Json
+  note      String   @default("")
+  createdBy String
+  createdAt DateTime @default(now())
+
+  @@unique([eventId, version])
+  @@index([tenantId, eventId])
+}
+
+model EventSchedule {
+  id         String   @id @default(cuid())
+  tenantId   String
+  eventId    String
+  title      String
+  startsAt   DateTime
+  endsAt     DateTime?
+  timezone   String   @default("Asia/Jakarta")
+  venueName  String   @default("")
+  address    String   @default("")
+  mapsUrl    String?
+  latitude   Float?
+  longitude  Float?
+  note       String?
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  @@index([tenantId, eventId])
+}
+
+model Guest {
+  id             String    @id @default(cuid())
+  tenantId       String
+  eventId        String
+  name           String
+  phoneEncrypted String?
+  phoneMasked    String?
+  phoneHash      String?
+  email          String?
+  token          String    @unique
+  qrPayload      String    @unique
+  groupLabel     String    @default("Umum")
+  tags           Json      @default("[]")
+  paxAllocated   Int       @default(1)
+  paxConfirmed   Int       @default(0)
+  customFields   Json      @default("{}")
+  notes          String?
+  seatNumber     String?
+  tableNumber    String?
+  blacklisted    Boolean   @default(false)
+  optOut         Boolean   @default(false)
+  walkIn         Boolean   @default(false)
+  invitedAt      DateTime  @default(now())
+  lastOpenedAt   DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([eventId, phoneHash])
+  @@index([tenantId, eventId])
+  @@index([eventId, groupLabel])
+  @@index([eventId, name])
+}
+
+model RsvpForm {
+  id                 String    @id @default(cuid())
+  tenantId           String
+  eventId            String    @unique
+  fields             Json      @default("[]")
+  settings           Json      @default("{}")
+  deadlineAt         DateTime?
+  paxQuotaPerGuest   Int       @default(5)
+  isClosed           Boolean   @default(false)
+  thankYouMessage    String    @default("Terima kasih! Konfirmasi kehadiran Anda sudah kami terima.")
+  redirectUrl        String?
+  locales            Json      @default("{}")
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@index([tenantId])
+}
+
+model Rsvp {
+  id              String     @id @default(cuid())
+  tenantId        String
+  eventId         String
+  guestId         String
+  status          RsvpStatus
+  pax             Int        @default(1)
+  answers         Json       @default("{}")
+  sessionId       String?
+  mealChoice      String?
+  attendanceNote  String?
+  editTokenHash   String     @unique
+  utmSource       String?
+  utmMedium       String?
+  utmCampaign     String?
+  ipHash          String?
+  submittedAt     DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  cancelledAt     DateTime?
+
+  @@unique([eventId, guestId])
+  @@index([tenantId, eventId, status])
+}
+
+model GuestVisit {
+  id          String   @id @default(cuid())
+  tenantId    String
+  eventId     String
+  guestId     String?
+  sectionKey  String   @default("cover")
+  path        String
+  utmSource   String?
+  utmMedium   String?
+  utmCampaign String?
+  referrerHash String?
+  ipHash      String?
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId, eventId, createdAt])
+  @@index([eventId, sectionKey])
+}
+
+model Wish {
+  id           String     @id @default(cuid())
+  tenantId     String
+  eventId      String
+  guestId      String?
+  authorName   String
+  message      String
+  status       WishStatus @default(PENDING)
+  reply        String?
+  ipHash       String?
+  moderatedAt  DateTime?
+  moderatedBy  String?
+  createdAt    DateTime   @default(now())
+
+  @@index([tenantId, eventId, status])
+}
+
+model GuestBookEntry {
+  id        String   @id @default(cuid())
+  tenantId  String
+  eventId   String
+  guestId   String?
+  name      String
+  message   String   @default("")
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, eventId])
+}
+
+model CheckIn {
+  id                 String   @id @default(cuid())
+  tenantId           String
+  eventId            String
+  guestId            String
+  station            String   @default("loket-1")
+  deviceId           String   @default("web")
+  actorId            String?
+  method             String   @default("QR")
+  syncedFromOffline  Boolean  @default(false)
+  note               String?
+  at                 DateTime @default(now())
+
+  @@unique([eventId, guestId])
+  @@index([tenantId, eventId, at])
+}
+
+model SeatingTable {
+  id        String   @id @default(cuid())
+  tenantId  String
+  eventId   String
+  name      String
+  capacity  Int      @default(10)
+  shape     String   @default("ROUND")
+  position  Json     @default("{}")
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, eventId])
+}
+
+model Blast {
+  id                String       @id @default(cuid())
+  tenantId          String
+  eventId           String
+  channel           BlastChannel @default(WHATSAPP)
+  name              String
+  templateBody      String
+  filters           Json         @default("{}")
+  scheduledAt       DateTime?
+  status            BlastStatus  @default(DRAFT)
+  throttlePerMinute Int          @default(60)
+  total             Int          @default(0)
+  sent              Int          @default(0)
+  failed            Int          @default(0)
+  createdBy         String
+  createdAt         DateTime     @default(now())
+  startedAt         DateTime?
+  finishedAt        DateTime?
+
+  @@index([tenantId, eventId, status])
+}
+
+model BlastMessage {
+  id                String        @id @default(cuid())
+  tenantId          String
+  blastId           String
+  guestId           String
+  toMasked          String?
+  body              String
+  status            MessageStatus @default(QUEUED)
+  error             String?
+  providerMessageId String?
+  sentAt            DateTime?
+  readAt            DateTime?
+  repliedAt         DateTime?
+  createdAt         DateTime      @default(now())
+
+  @@index([tenantId, blastId, status])
+  @@index([blastId, guestId])
+}
+
+model Reminder {
+  id           String       @id @default(cuid())
+  tenantId     String
+  eventId      String
+  blastId      String?
+  channel      BlastChannel @default(WHATSAPP)
+  offsetDays   Int
+  templateBody String
+  scheduledFor DateTime
+  status       String       @default("SCHEDULED")
+  jobId        String?
+  createdAt    DateTime     @default(now())
+
+  @@index([tenantId, eventId, status])
+}
+
+model Notification {
+  id        String              @id @default(cuid())
+  tenantId  String
+  userId    String?
+  channel   NotificationChannel @default(IN_APP)
+  eventType String
+  title     String
+  body      String
+  toMasked  String?
+  status    String              @default("SENT")
+  payload   Json               @default("{}")
+  readAt    DateTime?
+  createdAt DateTime            @default(now())
+
+  @@index([tenantId, userId, readAt])
+}
+
+model NotificationLog {
+  id         String   @id @default(cuid())
+  tenantId   String?
+  channel    String
+  provider   String
+  toMasked   String?
+  templateKey String?
+  payload    Json     @default("{}")
+  status     String
+  response   Json     @default("{}")
+  createdAt  DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+}
+
+model ApiKey {
+  id         String    @id @default(cuid())
+  tenantId   String
+  name       String
+  prefix     String
+  keyHash    String    @unique
+  secretEncrypted String
+  scopes     Json      @default("[]")
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+  createdBy  String
+  createdAt  DateTime  @default(now())
+
+  @@index([tenantId])
+}
+
+model Webhook {
+  id          String   @id @default(cuid())
+  tenantId    String
+  url         String
+  secretEncrypted String
+  events      Json     @default("[]")
+  active      Boolean  @default(true)
+  description String   @default("")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenantId, active])
+}
+
+model WebhookDelivery {
+  id          String    @id @default(cuid())
+  tenantId    String
+  webhookId   String
+  eventType   String
+  payload     Json
+  signature   String
+  status      String    @default("PENDING")
+  attempts    Int       @default(0)
+  lastError   String?
+  nextRetryAt DateTime?
+  deliveredAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([tenantId, status, nextRetryAt])
+}
+
+model AuditLog {
+  id            String   @id @default(cuid())
+  tenantId      String?
+  actorId       String?
+  actorEmail    String?
+  action        String
+  entity        String
+  entityId      String?
+  ipHash        String?
+  userAgentHash String?
+  before        Json?
+  after         Json?
+  createdAt     DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([actorId, createdAt])
+}
+
+model MediaAsset {
+  id           String   @id @default(cuid())
+  tenantId     String
+  key          String   @unique
+  originalName String
+  mime         String
+  sizeBytes    Int
+  width        Int?
+  height       Int?
+  uploadedBy   String
+  createdAt    DateTime @default(now())
+
+  @@index([tenantId])
+}
+
+model Template {
+  id          String         @id @default(cuid())
+  code        String         @unique
+  name        String
+  category    String         @default("Umum")
+  tags        Json           @default("[]")
+  themeId     String
+  config      Json           @default("{}")
+  previewUrl  String?
+  status      TemplateStatus @default(DRAFT)
+  featured    Boolean        @default(false)
+  createdBy   String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([status, category])
+}
+
+model Announcement {
+  id          String    @id @default(cuid())
+  title       String
+  body        String
+  audience    Json      @default("[]")
+  active      Boolean   @default(true)
+  publishedAt DateTime  @default(now())
+  createdBy   String?
+  createdAt   DateTime  @default(now())
+
+  @@index([active, publishedAt])
+}
+
+model FeatureFlag {
+  id                String   @id @default(cuid())
+  key               String   @unique
+  description       String   @default("")
+  enabledGlobally   Boolean  @default(false)
+  tenantOverrides   Json     @default("{}")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model SystemSetting {
+  key       String   @id
+  value     Json
+  updatedBy String?
+  updatedAt DateTime @updatedAt
+}
+
+model Comment {
+  id         String   @id @default(cuid())
+  tenantId   String
+  eventId    String
+  authorId   String
+  body       String
+  sectionKey String?
+  resolved   Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  @@index([tenantId, eventId])
+}
+
+model ReportAbuse {
+  id            String       @id @default(cuid())
+  tenantId      String?
+  eventId       String?
+  reporterEmail String?
+  reason        String
+  details       String       @default("")
+  status        ReportStatus @default(OPEN)
+  resolvedAt    DateTime?
+  createdAt     DateTime     @default(now())
+
+  @@index([status, createdAt])
+}
+
+model QuotaUsage {
+  id        String   @id @default(cuid())
+  tenantId  String
+  metric    String
+  period    String
+  used      Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, metric, period])
+}

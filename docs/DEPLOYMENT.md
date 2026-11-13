@@ -1,22 +1,42 @@
-# Deployment
-Aplikasi adalah Next.js full-stack (server actions + route handlers + PostgreSQL), bukan SPA statis. **GitHub Pages tidak cukup** (tidak ada backend).
+# Panduan Deploy
 
-## Opsi yang direkomendasikan
-1. **GitHub** menyimpan kode. 2. **Vercel / Render / Railway / VPS (Docker)** menjalankan Next.js (`npm run build && npm start`, Node 20+). 3. **Supabase / Neon / PostgreSQL terkelola** untuk database.
+## Lokal / VPS Ubuntu 22.04 atau Debian 12
+```bash
+sudo apt update && sudo apt install -y curl git ca-certificates
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER && newgrp docker
+git clone <repo-url> digital-invitation && cd digital-invitation
+./scripts/setup.sh              # atau: docker compose up -d --build
+curl -fsS http://localhost:3000/api/health
+```
+Layanan: app `:3000`, PostgreSQL `:5432`, Redis `:6379`, MinIO API `:9000`/console `:9001`, Mailhog `:8025`.
 
-Langkah umum: push ke GitHub → import repo di hosting → isi variabel dari `.env.example` (minimal `DATABASE_URL`, `SESSION_SECRET`, `NEXT_PUBLIC_APP_URL`) → jalankan `npx drizzle-kit push` sekali terhadap database produksi → deploy.
+Entrypoint app menjalankan `wait-for-db` → `npm run db:migrate` → seed hanya bila database masih kosong → `npm start`. Worker memakai image sama dengan `docker/worker-entrypoint.sh`.
 
-## Cloudflare Pages
-Next.js dengan server actions membutuhkan runtime server. Gunakan adapter **OpenNext** (`@opennextjs/cloudflare`) atau Cloudflare Workers; database harus dapat dijangkau dari edge (Supabase pooler/Hyperdrive). Driver `pg` memerlukan kompatibilitas Node (`nodejs_compat`). Jika ingin cara paling sederhana, pakai Vercel/Render untuk aplikasi dan Cloudflare hanya untuk DNS/CDN. Routing SPA fallback tidak diperlukan (routing ditangani Next.js).
+## VPS + reverse proxy
+- Arahkan domain ke VPS; jalankan Nginx/Caddy terminated TLS.
+- `APP_URL` dan `NEXT_PUBLIC_APP_URL` harus memakai `https://domain`.
+- Rotasi `AUTH_SECRET`, `ENCRYPTION_KEY`, `CSRF_SALT`; jangan pakai nilai `.env.example`.
+- `Strict-Transport-Security` dan CSP aktif; tambahkan domain font/pixel/analytics ke `next.config.ts` bila dibutuhkan.
+- Backup harian: `pg_dump`, snapshot volume MinIO, dan `/api/admin/backup`.
 
-## Domain
-Arahkan DNS ke hosting, set `NEXT_PUBLIC_APP_URL=https://domainanda.com` (dipakai untuk canonical, OG image, QR). Custom domain per customer: fitur entitlement `customDomain` + tabel `custom_domains` (verifikasi DNS = langkah lanjutan).
+## Coolify
+1. Import repo sebagai Docker Compose project.
+2. Isi environment sesuai `.env.example`; `DATABASE_URL` mengarah ke Postgres internal, `REDIS_URL` ke Redis internal.
+3. Set health check path `/api/health` dan port `3000`.
+4. Jalankan deploy; migrasi otomatis via entrypoint.
 
-## Payment gateway
-1. `PAYMENT_PROVIDER=midtrans|xendit` + kunci server. 2. Implementasikan `createCharge` di `src/adapters/payment.ts`. 3. Deploy webhook (`supabase/functions/payment-webhook` atau route Next.js) yang **memverifikasi signature** lalu memanggil `applyPaidOrder`. 4. Uji di sandbox sebelum live. Selama belum, aplikasi tetap berjalan dalam mode demo dan menampilkan statusnya di Admin → Pengaturan.
+## Vercel + Neon/Supabase + Upstash + S3
+Vercel tidak menjalankan container Postgres/Redis/MinIO. Gunakan:
+- PostgreSQL terkelola (Neon/Supabase) + `DATABASE_URL` pooled;
+- Upstash Redis + `REDIS_URL`;
+- Cloudflare R2/AWS S3 + kredensial `S3_*`;
+- worker terpisah (Railway/Fly/VPS) untuk BullMQ;
+- jalankan `npm run db:migrate && npm run db:seed` sekali dari CI;
+- `NEXT_PUBLIC_APP_URL`, `APP_URL`, dan callback Google diset ke domain produksi.
 
-## Email
-Isi `RESEND_API_KEY` dan `EMAIL_FROM` → notifikasi mengirim email otomatis (`src/adapters/email.ts`).
-
-## Checklist produksi
-`SESSION_SECRET` acak • HTTPS • ubah password akun demo / hapus data demo • backup database • rate limit berbasis Redis bila multi-instance.
+## Skalabilitas
+- App stateless: scale horizontal di belakang LB dengan sticky session tidak wajib (sesi di DB).
+- Pisahkan worker per queue (`blast`, `reminder`, `webhook`, `notification`) dan naikkan `WORKER_CONCURRENCY`.
+- Pindahkan rate limit ke Redis, tambahkan read replica untuk analitik, dan object CDN di depan MinIO/S3.
+- Partisi `GuestVisit` per bulan untuk volume tinggi; terapkan retensi audit/analytics.

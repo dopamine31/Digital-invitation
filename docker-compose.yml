@@ -1,0 +1,157 @@
+name: rasa-undangan
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: rasa
+      POSTGRES_PASSWORD: rasa
+      POSTGRES_DB: rasa
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rasa -d rasa"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redisdata:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: rasa
+      MINIO_ROOT_PASSWORD: rasa-secret-change-me
+    volumes:
+      - miniodata:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/minio/health/live >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+
+  createbuckets:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    depends_on:
+      minio:
+        condition: service_started
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 rasa rasa-secret-change-me; do sleep 2; done;
+      mc mb --ignore-existing local/rasa-media;
+      mc anonymous set public local/rasa-media;
+      echo 'bucket rasa-media siap';
+      "
+
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    restart: unless-stopped
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    environment:
+      NODE_ENV: production
+      APP_URL: http://localhost:3000
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      AUTH_SECRET: ${AUTH_SECRET:-docker-dev-secret-ganti-sebelum-produksi-1234567890}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-7b6b9d1c1d4a4e2f8c0a5b3d7e9f1a2c4d6e8f0a1b3c5d7e9f1a2c4d6}
+      CSRF_SALT: ${CSRF_SALT:-docker-dev-csrf-salt}
+      DATABASE_URL: postgresql://rasa:rasa@postgres:5432/rasa?schema=public
+      REDIS_URL: redis://redis:6379
+      S3_ENDPOINT: http://minio:9000
+      S3_PUBLIC_ENDPOINT: http://localhost:9000
+      S3_REGION: us-east-1
+      S3_BUCKET: rasa-media
+      S3_ACCESS_KEY: rasa
+      S3_SECRET_KEY: rasa-secret-change-me
+      S3_FORCE_PATH_STYLE: "true"
+      WHATSAPP_ADAPTER: ${WHATSAPP_ADAPTER:-mock}
+      EMAIL_ADAPTER: ${EMAIL_ADAPTER:-mock}
+      SMTP_HOST: mailhog
+      SMTP_PORT: "1025"
+      EMAIL_FROM: "Rasa Undangan <no-reply@rasa.id>"
+      PAYMENT_ADAPTER: ${PAYMENT_ADAPTER:-mock}
+      DEFAULT_LOCALE: id
+      DEFAULT_CURRENCY: IDR
+      DEFAULT_TIMEZONE: Asia/Jakarta
+      MAINTENANCE_MODE: "false"
+      SUPER_ADMIN_EMAIL: superadmin@rasa.id
+      SUPER_ADMIN_PASSWORD: SuperAdmin!234
+      SEED_DEMO_DATA: "true"
+      BLAST_THROTTLE_PER_MINUTE: "60"
+      WORKER_CONCURRENCY: "5"
+      LOG_LEVEL: info
+    ports:
+      - "3000:3000"
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://rasa:rasa@postgres:5432/rasa?schema=public
+      REDIS_URL: redis://redis:6379
+      AUTH_SECRET: ${AUTH_SECRET:-docker-dev-secret-ganti-sebelum-produksi-1234567890}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-7b6b9d1c1d4a4e2f8c0a5b3d7e9f1a2c4d6e8f0a1b3c5d7e9f1a2c4d6}
+      CSRF_SALT: ${CSRF_SALT:-docker-dev-csrf-salt}
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: rasa-media
+      S3_ACCESS_KEY: rasa
+      S3_SECRET_KEY: rasa-secret-change-me
+      WHATSAPP_ADAPTER: ${WHATSAPP_ADAPTER:-mock}
+      EMAIL_ADAPTER: ${EMAIL_ADAPTER:-mock}
+      SMTP_HOST: mailhog
+      SMTP_PORT: "1025"
+      EMAIL_FROM: "Rasa Undangan <no-reply@rasa.id>"
+      PAYMENT_ADAPTER: ${PAYMENT_ADAPTER:-mock}
+      BLAST_THROTTLE_PER_MINUTE: "60"
+      WORKER_CONCURRENCY: "5"
+      LOG_LEVEL: info
+    command: ["bash", "docker/worker-entrypoint.sh"]
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:
